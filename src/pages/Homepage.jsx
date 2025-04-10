@@ -31,7 +31,7 @@ function Homepage() {
     <div className="homepage">
       <h1>Convert Docs to Text<br/> to Feed LLMs</h1>
       <p className="description">
-        The fastest way to feed documentation to your AI assistants. Instant GitBook to plain text conversion.
+        The fastest way to feed documentation to your AI assistants. Instant docs to plain text conversion.
       </p>
       
       <div className="input-container">
@@ -39,7 +39,7 @@ function Homepage() {
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="Enter GitBook docs URL"
+          placeholder="Enter any docs URL"
           className="url-input"
         />
         <button 
