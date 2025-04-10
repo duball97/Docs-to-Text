@@ -29,7 +29,7 @@ function Homepage() {
 
   return (
     <div className="homepage">
-      <h1>Convert Docs to Text<br/> to Feed LLMs</h1>
+      <h1>Easily Convert Docs to Text<br/> to Feed LLMs</h1>
       <p className="description">
         The fastest way to feed documentation to your AI assistants. Instant docs to plain text conversion.
       </p>
