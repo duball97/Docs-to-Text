@@ -11,15 +11,28 @@ function Homepage() {
     
     setIsLoading(true);
     try {
-      // For now, we just mock the conversion
-      // Later, this will connect to a backend that uses puppeteer
-      setConvertedText(`Converted content from ${url} will appear here.`);
+      const response = await fetch('http://localhost:5000/convert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setConvertedText(data.convertedText);
+      } else {
+        console.error('Conversion error:', data.error);
+        setConvertedText('Error converting docs.');
+      }
     } catch (error) {
-      console.error('Error converting docs:', error);
+      console.error('Error connecting to conversion service:', error);
+      setConvertedText('Error connecting to conversion service.');
     } finally {
       setIsLoading(false);
     }
   };
+  
 
   const handleCopy = () => {
     if (!convertedText) return;
