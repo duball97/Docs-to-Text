@@ -4,65 +4,72 @@ const puppeteer = require('puppeteer');
 
 const app = express();
 
-// Middleware to parse JSON bodies and enable CORS
-app.use(express.json());
 app.use(cors());
 
-// POST /convert endpoint to receive a URL and return converted text.
-app.post('/convert', async (req, res) => {
-  const { url } = req.body;
+// GET /convert endpoint that streams conversion updates using SSE.
+// Example: GET http://localhost:5000/convert?url=https://docs.example.com
+app.get('/convert', async (req, res) => {
+  const { url } = req.query;
   if (!url) {
-    return res.status(400).json({ error: 'Missing URL in request body' });
+    res.status(400).json({ error: 'Missing URL in query parameter' });
+    return;
   }
 
+  // Set headers for SSE.
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
   try {
-    const convertedText = await convertDocsToText(url);
-    res.json({ convertedText });
+    await convertDocsToTextSSE(url, res);
   } catch (error) {
     console.error('Error during conversion:', error);
-    res.status(500).json({ error: 'Conversion failed' });
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'Conversion failed' })}\n\n`);
+    res.end();
   }
 });
 
-// Function to launch Puppeteer, navigate through pages, extract text,
-// and click the appropriate next page button until finished.
-async function convertDocsToText(startUrl) {
-  // Launch Puppeteer in headless mode (set to false for debugging).
+// Function to extract text from pages and stream updates via SSE.
+async function convertDocsToTextSSE(startUrl, res) {
+  // Launch Puppeteer.
   const browser = await puppeteer.launch({
     headless: true,
     slowMo: 0
   });
   const page = await browser.newPage();
-  let fullText = '';
 
-  // Go to the starting URL.
   await page.goto(startUrl, { waitUntil: 'networkidle2' });
 
   while (true) {
-    // Wait a moment for the content to settle.
+    // Wait a moment for the page to settle.
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Extract text from the page.
-    const pageText = await page.evaluate(() => {
-      // Try #content-area first; fallback to <main> if not found.
-      let contentEl = document.getElementById('content-area');
-      if (!contentEl) {
-        contentEl = document.querySelector('main');
-      }
-      return contentEl ? contentEl.innerText : '';
-    });
-
-    // Log the extracted content (first 200 characters for brevity).
-    console.log("Extracted content from current page:\n", pageText ? pageText.substring(0, 200) + "..." : "(empty)");
-
-    if (pageText && pageText.trim().length > 0) {
-      fullText += pageText + "\n\n";
-    } else {
-      console.warn("No content extracted on this page.");
+    // Try to extract text from the page, wrapping in try–catch to avoid errors
+    // if the execution context was destroyed.
+    let pageText = '';
+    try {
+      pageText = await page.evaluate(() => {
+        // Try #content-area first; if not present, fallback to <main>.
+        let contentEl = document.getElementById('content-area');
+        if (!contentEl) {
+          contentEl = document.querySelector('main');
+        }
+        return contentEl ? contentEl.innerText : '';
+      });
+    } catch (e) {
+      console.warn("Extraction error (likely due to navigation):", e.message);
+      // In case of error, set pageText to empty and continue.
+      pageText = "";
     }
 
+    // Log (for debugging) the first 200 characters.
+    console.log("Extracted content (first 200 chars):", pageText ? pageText.substring(0, 200) + "..." : "(empty)");
+
+    // Stream the extracted text to the client.
+    res.write(`data: ${JSON.stringify({ text: pageText })}\n\n`);
+
     // --- Next Page Navigation ---
-    // First, try the primary next page button (docs site with pagination)
+    // First, try the primary next page button.
     let nextBtnHandle = await page.$('div#pagination a.ml-auto');
 
     if (nextBtnHandle) {
@@ -82,7 +89,6 @@ async function convertDocsToText(startUrl) {
       }
     } else {
       // Otherwise, try to find an alternative next button.
-      // Look for an anchor with class "group" that contains a span with class "text-xs" whose text is "Next".
       const altNextBtnFound = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a.group'));
         const nextLink = links.find(link => {
@@ -112,9 +118,10 @@ async function convertDocsToText(startUrl) {
     }
   }
 
-  // Close the browser when done.
   await browser.close();
-  return fullText;
+  // Signal that the stream is done.
+  res.write(`event: done\ndata: ${JSON.stringify({ message: 'Finished extraction' })}\n\n`);
+  res.end();
 }
 
 const PORT = process.env.PORT || 5000;

@@ -1,38 +1,53 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './Homepage.css';
 
 function Homepage() {
   const [url, setUrl] = useState('');
   const [convertedText, setConvertedText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
-  const handleConvert = async () => {
-    if (!url) return;
-    
-    setIsLoading(true);
-    try {
-      const response = await fetch('http://localhost:5000/convert', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ url }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setConvertedText(data.convertedText);
-      } else {
-        console.error('Conversion error:', data.error);
-        setConvertedText('Error converting docs.');
-      }
-    } catch (error) {
-      console.error('Error connecting to conversion service:', error);
-      setConvertedText('Error connecting to conversion service.');
-    } finally {
-      setIsLoading(false);
+  const [eventSource, setEventSource] = useState(null);
+
+  // Start listening for events from the server.
+  const startConversion = (conversionUrl) => {
+    // Ensure previous EventSource is closed.
+    if (eventSource) {
+      eventSource.close();
     }
+
+    // Create an EventSource with the URL as a query parameter.
+    const es = new EventSource(`http://localhost:5000/convert?url=${encodeURIComponent(conversionUrl)}`);
+    
+    es.onmessage = (event) => {
+      // event.data is a JSON string containing { text: ... }
+      try {
+        const { text } = JSON.parse(event.data);
+        setConvertedText(prev => prev + text + "\n\n");
+      } catch (error) {
+        console.error("Error parsing event data:", error);
+      }
+    };
+
+    es.addEventListener("done", (event) => {
+      console.log("Conversion finished:", event.data);
+      es.close();
+      setIsLoading(false);
+    });
+
+    es.onerror = (err) => {
+      console.error("EventSource failed:", err);
+      es.close();
+      setIsLoading(false);
+    };
+
+    setEventSource(es);
   };
-  
+
+  const handleConvert = () => {
+    if (!url) return;
+    setConvertedText('');
+    setIsLoading(true);
+    startConversion(url);
+  };
 
   const handleCopy = () => {
     if (!convertedText) return;
