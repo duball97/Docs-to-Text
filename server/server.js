@@ -25,12 +25,12 @@ app.post('/convert', async (req, res) => {
 });
 
 // Function to launch Puppeteer, navigate through pages, extract text,
-// and click the next page button until finished.
+// and click the appropriate next page button until finished.
 async function convertDocsToText(startUrl) {
-  // Launch Puppeteer with headless: false and slowMo for debugging.
+  // Launch Puppeteer in headless mode (set to false for debugging).
   const browser = await puppeteer.launch({
-    headless: false,
-    slowMo: 50 // Slow down actions for visual inspection.
+    headless: true,
+    slowMo: 0
   });
   const page = await browser.newPage();
   let fullText = '';
@@ -39,44 +39,77 @@ async function convertDocsToText(startUrl) {
   await page.goto(startUrl, { waitUntil: 'networkidle2' });
 
   while (true) {
-    // Wait for the content area selector to appear.
-    await page.waitForSelector('#content-area', { timeout: 5000 }).catch(() => {
-      console.warn("The #content-area selector was not found on this page.");
-    });
+    // Wait a moment for the content to settle.
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Extract text from the page.
     const pageText = await page.evaluate(() => {
-      const contentEl = document.getElementById('content-area');
+      // Try #content-area first; fallback to <main> if not found.
+      let contentEl = document.getElementById('content-area');
+      if (!contentEl) {
+        contentEl = document.querySelector('main');
+      }
       return contentEl ? contentEl.innerText : '';
     });
 
-    // Log the extracted content for debugging.
-    console.log("Extracted content from current page:\n", pageText);
+    // Log the extracted content (first 200 characters for brevity).
+    console.log("Extracted content from current page:\n", pageText ? pageText.substring(0, 200) + "..." : "(empty)");
 
-    if (pageText) {
+    if (pageText && pageText.trim().length > 0) {
       fullText += pageText + "\n\n";
     } else {
       console.warn("No content extracted on this page.");
     }
 
-    // Attempt to find the next page button.
-    const nextPageButtonExists = await page.$('div#pagination a.ml-auto');
+    // --- Next Page Navigation ---
+    // First, try the primary next page button (docs site with pagination)
+    let nextBtnHandle = await page.$('div#pagination a.ml-auto');
 
-    if (!nextPageButtonExists) {
-      console.log("No next page button found. Finished extraction.");
-      break;
+    if (nextBtnHandle) {
+      console.log("Clicking next page via primary button...");
+      try {
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 }),
+          page.evaluate(() => {
+            const btn = document.querySelector('div#pagination a.ml-auto');
+            if (btn) btn.click();
+          })
+        ]);
+        continue;
+      } catch (navError) {
+        console.warn("Navigation after clicking primary button failed:", navError.message);
+        break;
+      }
+    } else {
+      // Otherwise, try to find an alternative next button.
+      // Look for an anchor with class "group" that contains a span with class "text-xs" whose text is "Next".
+      const altNextBtnFound = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a.group'));
+        const nextLink = links.find(link => {
+          const span = link.querySelector('span.text-xs');
+          return span && span.textContent.trim().toLowerCase() === 'next';
+        });
+        if (nextLink) {
+          nextLink.click();
+          return true;
+        }
+        return false;
+      });
+
+      if (altNextBtnFound) {
+        console.log("Clicked alternative next page button.");
+        try {
+          await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 5000 });
+          continue;
+        } catch (navError) {
+          console.warn("Navigation after clicking alternative button failed:", navError.message);
+          break;
+        }
+      } else {
+        console.log("No next page button found. Finished extraction.");
+        break;
+      }
     }
-
-    console.log("Clicking next page...");
-
-    // Click the next page button using page.evaluate to avoid detached handle issues.
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2' }),
-      page.evaluate(() => {
-        const nextBtn = document.querySelector('div#pagination a.ml-auto');
-        if (nextBtn) nextBtn.click();
-      })
-    ]);
   }
 
   // Close the browser when done.
