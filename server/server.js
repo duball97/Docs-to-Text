@@ -33,7 +33,7 @@ app.get('/convert', async (req, res) => {
 async function convertDocsToTextSSE(startUrl, res) {
   // Launch Puppeteer.
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
     slowMo: 0
   });
   const page = await browser.newPage();
